@@ -3,8 +3,6 @@ const NODE_RADIUS = 20;
 const LINK_DISTANCE = 100;
 const SIMULATION_ALPHA = 1;
 
-// console.log(window.FileAPI.Writer);
-
 // Instantiate svg element.
 const LINK_ELEMENT_ID = 'link';
 const NODE_ELEMENT_ID = 'node';
@@ -27,12 +25,114 @@ d3.select('body')
 // TODO: consider formatting the graph as array of nodes + array of links, instead of a tree.
 var root_node;
 var nodes;
-var links;
-var simulation;
-var node_map;
+var links = [];
+var simulation = d3.forceSimulation();
+var node_map = {};
+
+d3.json('nodes.json').then(function(data) {
+    let index = 0;
+    nodes = data.map(n => {
+        n.show = true;
+        n.index = index++;
+        return n;
+    });
+    nodes.map(n => node_map[n.id] = n);
+
+    simulation.nodes(nodes)
+        .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
+        .force('center', d3.forceCenter(window.innerWidth / 2, window.innerHeight / 2))
+        .on('tick', tick);
+    update();
+});
+
+svg.append("svg:defs").append("svg:marker")
+    .attr("id", "inheritance_triangle")
+    .attr("refX", 6)
+    .attr("refY", 6)
+    .attr("markerWidth", 15)
+    .attr("markerHeight", 15)
+    .attr("orient", "auto")
+    .append("path")
+    .attr("d", "M 0 0 12 6 0 12 3 6")
+    .style("fill", "green");
+
+d3.json('parent_links.json').then(function(data) {
+    links = links.concat(data.map(link => {
+        link.source = node_map[link.parent].index;
+        link.target = node_map[link.child].index;
+        return link;
+    }));
+    simulation
+        .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
+        .force('link', d3.forceLink(links).distance(LINK_DISTANCE))
+        .force('center', d3.forceCenter(window.innerWidth / 2, window.innerHeight / 2))
+        .on('tick', tick);
+
+    link_elements = link_elements.data(links, function(d) {
+        return d.target;
+    });
+    link_elements.exit().remove();
+
+    link_elements.enter()
+        .append('line')
+        .attr('color', 'green')
+        .attr('marker-end', 'url(#inheritance_triangle)')
+        .style('stroke-width', 2)
+        .attr('class', LINK_ELEMENT_ID);
+
+    // must update selection after changes.
+    link_elements = svg.selectAll(`.${LINK_ELEMENT_ID}`);
+
+    update();
+});
+
+svg.append("svg:defs").append("svg:marker")
+    .attr("id", "shared_ptr_triangle")
+    .attr("refX", 6)
+    .attr("refY", 6)
+    .attr("markerWidth", 15)
+    .attr("markerHeight", 15)
+    .attr("orient", "auto")
+    .attr("stroke-width", 2)
+    .append("path")
+    .attr("d", "M 0 0 12 6 0 12 3 6")
+    .style("stroke", "black")
+    .style("stroke-width", 1)
+    .style("fill", "none");
+
+d3.json('shared_ptr_links.json').then(function(data) {
+    links = links.concat(data.map(link => {
+        link.source = node_map[link.owner].index;
+        link.target = node_map[link.target].index;
+        return link;
+    }));
+    simulation
+        .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
+        .force('link', d3.forceLink(links).distance(LINK_DISTANCE))
+        .force('center', d3.forceCenter(window.innerWidth / 2, window.innerHeight / 2))
+        .on('tick', tick);
+
+    link_elements = link_elements.data(links, function(d) {
+        return d.target;
+    });
+    link_elements.exit(); // .remove();
+
+    link_elements.enter()
+        .append('line')
+        .attr('color', 'black')
+        .attr('marker-end', 'url(#shared_ptr_triangle)')
+        .style('stroke-width', 2)
+        .attr('class', LINK_ELEMENT_ID);
+
+    // must update selection after changes.
+    link_elements = svg.selectAll(`.${LINK_ELEMENT_ID}`);
+
+    update();
+});
 
 // Read the graph, and initialize globals.
 d3.json('graph.json').then(function(data) {
+    return;
     root_node = data;
     var hierarchy = d3.hierarchy(root_node);
     var tree = d3.tree();
@@ -42,10 +142,12 @@ d3.json('graph.json').then(function(data) {
         n.show = true;
         return n;
     });
-    node_map = make_node_map(nodes);
-    links = th.links(nodes);
+    nodes.map(n => node_map[n.data.name] = n);
 
-    simulation = d3.forceSimulation(nodes)
+    links.concat(th.links(nodes));
+
+    //simulation = d3.forceSimulation(nodes)
+    simulation.nodes(nodes)
         .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
         .force('link', d3.forceLink(links).distance(LINK_DISTANCE))
         .force('center', d3.forceCenter(window.innerWidth / 2, window.innerHeight / 2))
@@ -54,20 +156,6 @@ d3.json('graph.json').then(function(data) {
 });
 
 function update() {
-    // Update links.
-    display_links = links.filter(link => {
-        return node_map[link.source.data.name].show && node_map[link.target.data.name].show;
-    });
-    link_elements = link_elements.data(display_links, function(d) { return d.target.index; });
-    link_elements.exit().remove();
-
-    link_elements.enter()
-        .append('line')
-        .attr('class', LINK_ELEMENT_ID);
-
-    // must update selection after changes.
-    link_elements = svg.selectAll(`.${LINK_ELEMENT_ID}`);
-
     // Update nodes.
     // the key function makes one pass through data members of each node_element,
     // then makes one pass over nodes. Matching values determine pairing of an
@@ -90,7 +178,7 @@ function update() {
         .attr('r', function(d) { return NODE_RADIUS; })
     nodeEnter
         .append('text')
-        .text(function(d) { return d.data.name; });
+        .text(function(d) { return d.id; });
 
     // must update selection after changes.
     node_elements = svg.selectAll(`.${NODE_ELEMENT_ID}`);
@@ -99,11 +187,32 @@ function update() {
 }
 
 function tick() {
+    const TIP_OFFSET = 8;
     link_elements
-        .attr('x1', function(d) { return d.source.x; })
-        .attr('y1', function(d) { return d.source.y; })
-        .attr('x2', function(d) { return d.target.x; })
-        .attr('y2', function(d) { return d.target.y; });
+        .attr('x1', function(d) {
+            let dx = d.target.x - d.source.x;
+            let dy = d.target.y - d.source.y;
+            let mag = (dx ** 2 + dy ** 2) ** 0.5;
+            return d.source.x + dx / mag * NODE_RADIUS;
+        })
+        .attr('y1', function(d) {
+            let dx = d.target.x - d.source.x;
+            let dy = d.target.y - d.source.y;
+            let mag = (dx ** 2 + dy ** 2) ** 0.5;
+            return d.source.y + dy / mag * NODE_RADIUS;
+        })
+        .attr('x2', function(d) {
+            let dx = d.target.x - d.source.x;
+            let dy = d.target.y - d.source.y;
+            let mag = (dx ** 2 + dy ** 2) ** 0.5;
+            return d.target.x - dx / mag * (NODE_RADIUS + TIP_OFFSET);
+        })
+        .attr('y2', function(d) {
+            let dx = d.target.x - d.source.x;
+            let dy = d.target.y - d.source.y;
+            let mag = (dx ** 2 + dy ** 2) ** 0.5;
+            return d.target.y - dy / mag * (NODE_RADIUS + TIP_OFFSET);
+        });
     node_elements.attr('transform', function(d) { return 'translate(' + d.x + ',' + d.y + ')'; });
 }
 
@@ -143,13 +252,6 @@ function click(d) {
         }
     }
     update();
-}
-
-// Maps node name to node object.
-function make_node_map(nodes) {
-    var dict = {};
-    nodes.map(n => dict[n.data.name] = n);
-    return dict;
 }
 
 function drag_action() {
